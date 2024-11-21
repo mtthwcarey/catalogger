@@ -168,110 +168,137 @@ def save_to_csv(book_details, filename=OUTPUT_FILE):
 
 def process_batch_file(filename):
     """Process a text file containing multiple book descriptions."""
-    notes_file = os.path.join(DATA_DIR, "entry_notes.txt")  # Updated file name
+    # Load descriptions from the batch file
+    descriptions = load_descriptions(filename)
+    logging.info(f"Loaded {len(descriptions)} descriptions from {filename}.")
 
+    if not descriptions:
+        logging.warning(f"No valid descriptions found in file: {filename}")
+        return
+
+    # Define the notes file path and ensure it is ready for writing
+    notes_file = os.path.join(DATA_DIR, "entry_notes.txt")
+    logging.info(f"Notes file will be saved to: {notes_file}")
+    clear_or_create_notes_file(notes_file)
+
+    # Process each description
+    for idx, description in enumerate(descriptions, start=1):
+        logging.info(f"Processing description {idx}/{len(descriptions)}...")  # Concise progress update
+        process_single_description(idx, description, notes_file)
+
+    logging.info("Batch processing completed successfully.")
+
+
+
+def load_descriptions(filename):
+    """Load book descriptions from file."""
     try:
-        with open(filename, "r") as f:
-            # Split lines and filter out empty ones
-            descriptions = [line.strip() for line in f.readlines() if line.strip()]
-        logging.info(f"Found {len(descriptions)} descriptions in {filename}.")
-        print(f"Found {len(descriptions)} descriptions in {filename}.")
+        with open(filename, "r") as file:
+            return [line.strip() for line in file if line.strip()]
+    except FileNotFoundError:
+        logging.error(f"File not found: {filename}")
+        print(f"File not found: {filename}")
+        return []
+    except Exception as e:
+        logging.error(f"Error reading file {filename}: {e}")
+        print(f"An error occurred while reading the file: {e}")
+        return []
 
-        # Clear or create the notes file
+
+def clear_or_create_notes_file(notes_file):
+    """Clear or create the entry notes file."""
+    try:
         with open(notes_file, "w") as nf:
             nf.write("Entry Notes Log\n")
             nf.write("=" * 20 + "\n")
-
-        for idx, description in enumerate(descriptions, start=1):
-            logging.debug(f"Starting processing for book {idx}.")
-            print(f"\nProcessing book {idx}/{len(descriptions)}...")
-            logging.info(f"Processing book {idx}: {description[:50]}...")  # Log preview of description
-
-            # Extract book details
-            entry_note = "No problems"  # Default note for successful entries
-            try:
-                book_details_text = parse_book_details(description)
-                if not book_details_text:
-                    entry_note = f"Skipped '{description}' - could not extract book details."
-                    with open(notes_file, "a") as nf:
-                        nf.write(entry_note + "\n")
-                    print(entry_note)
-                    logging.warning(f"Book {idx}: Failed to extract book details.")
-                    continue
-            except Exception as e:
-                entry_note = f"Skipped '{description}' - error extracting book details: {e}."
-                with open(notes_file, "a") as nf:
-                    nf.write(entry_note + "\n")
-                print(entry_note)
-                logging.error(f"Book {idx}: Extraction failed with error: {e}")
-                continue
-
-            # Parse extracted details
-            book_details = {}
-            for line in book_details_text.split("\n"):
-                try:
-                    key, value = line.split(":", 1)
-                    book_details[key.strip().lstrip("-").strip()] = value.strip()
-                except ValueError:
-                    logging.warning(f"Book {idx}: Malformed line in details: {line}")
-                    continue
-
-            # Fetch metadata
-            metadata_found = False
-            try:
-                metadata = fetch_metadata(book_details.get("Title", ""), book_details.get("Author", ""))
-                if metadata:
-                    book_details.update(metadata)
-                    metadata_found = True
-                    print(f"Metadata found and added for book {idx}.")
-                    logging.info(f"Book {idx}: Metadata fetched successfully.")
-            except Exception as e:
-                logging.error(f"Book {idx}: Metadata fetch failed with error: {e}")
-
-            # Check if book_details has meaningful data
-            if not any(value.strip() for value in book_details.values()):
-                # If all fields are empty, treat as skipped
-                entry_note = f"Skipped '{description}' - insufficient data to save."
-                with open(notes_file, "a") as nf:
-                    nf.write(entry_note + "\n")
-                print(entry_note)
-                logging.warning(f"Book {idx}: Insufficient data to save.")
-                continue
-
-            # Add Index Number and Entry Time
-            book_details["Index Number"] = f"{idx:03}"  # Correctly padded index number
-            book_details["Entry Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            if not metadata_found:
-                entry_note = f"Added '{description}' to CSV without metadata."
-
-            # Save to CSV and log the note
-            try:
-                book_details["Entry Notes"] = entry_note  # Ensure entry_note reflects the actual status
-                save_to_csv(book_details)
-                if not metadata_found:
-                    with open(notes_file, "a") as nf:
-                        nf.write(entry_note + "\n")
-                    print(entry_note)
-                    logging.info(f"Book {idx}: Added to CSV without metadata.")
-                else:
-                    print(f"Book {idx} saved successfully!")
-                    logging.info(f"Book {idx}: Processed successfully.")
-            except Exception as e:
-                entry_note = f"Skipped '{description}' - error saving to CSV: {e}."
-                with open(notes_file, "a") as nf:
-                    nf.write(entry_note + "\n")
-                print(entry_note)
-                logging.error(f"Book {idx}: Failed to save with error: {e}")
-
-        print("Batch processing complete.")
-        logging.info("Batch processing completed successfully.")
-
-    except FileNotFoundError:
-        print(f"File not found: {filename}")
-        logging.error(f"Batch file {filename} not found.")
     except Exception as e:
-        print(f"An error occurred while processing the batch file: {e}")
-        logging.error(f"Batch processing failed: {e}")
+        logging.error(f"Error creating notes file: {e}")
+        print(f"An error occurred while setting up the notes file: {e}")
+
+
+def process_single_description(index, description, notes_file):
+    """Process a single book description."""
+    logging.info(f"Processing book {index}: {description[:50]}...")
+
+    notes = "No problems"
+
+    # Extract book details
+    try:
+        book_details_text = parse_book_details(description)
+        if not book_details_text:
+            notes = "Could not extract book details"
+            write_to_notes_file(index, description, notes, notes_file)
+            return
+    except Exception as e:
+        notes = f"Error extracting details: {e}"
+        write_to_notes_file(index, description, notes, notes_file)
+        return
+
+    # Parse details into a dictionary
+    book_details = parse_book_details_to_dict(book_details_text)
+
+    # Fetch metadata
+    metadata_found = False
+    try:
+        metadata = fetch_metadata(book_details.get("Title", ""), book_details.get("Author", ""))
+        if metadata:
+            book_details.update(metadata)
+            metadata_found = True
+        else:
+            notes = "Metadata not found"
+            write_to_notes_file(index, description, notes, notes_file)
+    except Exception as e:
+        notes = f"Error fetching metadata: {e}"
+        write_to_notes_file(index, description, notes, notes_file)
+
+    # Add processing notes to the book details
+    book_details["Notes"] = notes
+
+    # Save details to CSV
+    try:
+        book_details["Index Number"] = f"{index:03}"
+        book_details["Entry Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_to_csv(book_details)
+        logging.info(f"Book {index}: Saved successfully.")
+    except Exception as e:
+        notes = f"Error saving to CSV: {e}"
+        write_to_notes_file(index, description, notes, notes_file)
+
+
+def write_to_notes_file(index, description, notes, notes_file):
+    """Write problematic entries to the notes file."""
+    entry_note = f"Book {index}:\n{notes}\nOriginal Entry: {description}\n\n"
+    try:
+        with open(notes_file, "a") as nf:
+            nf.write(entry_note)
+        logging.info(f"Written to notes file: Book {index}")
+    except Exception as e:
+        logging.error(f"Failed to write to notes file: {e}")
+        print(f"Error writing to notes file: {e}")
+
+def parse_book_details_to_dict(book_details_text):
+    """Parse extracted book details into a dictionary."""
+    book_details = {}
+    for line in book_details_text.split("\n"):
+        try:
+            key, value = line.split(":", 1)
+            book_details[key.strip().lstrip("-").strip()] = value.strip()
+        except ValueError:
+            logging.warning(f"Malformed line in book details: {line}")
+    return book_details
+
+
+def handle_entry_failure(index, description, reason, notes_file):
+    """Handle failures during book processing."""
+    entry_note = f"Skipped book {index}: {reason}"
+    print(entry_note)
+    logging.warning(entry_note)
+    try:
+        with open(notes_file, "a") as nf:
+            nf.write(f"{entry_note} - Description: {description[:50]}...\n")
+    except Exception as e:
+        logging.error(f"Failed to write to notes file: {e}")
+
 
 def main():
     print("Starting the book cataloging tool...")

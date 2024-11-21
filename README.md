@@ -1,11 +1,14 @@
 Catalogger
 book cataloger
 
-Wed 20 Nov 2024 03:39:48 PM PST 
-Uses voice recognition or natural-language text processing to catalog books into a csv file.
-Better docs are in the works.
 
+Thu 21 Nov 2024 04:07:24 AM PST 
 
+To more easily catalog a book collection.
+
+Parses text or speech input, fetches metadata based on parsed input and puts metadata into a csv file.
+
+Basic installation instructions soon to come.
 
 ## Credits
 
@@ -21,8 +24,7 @@ This project uses the following libraries:
 
 ## Version
 
-Current Version: **1.0.0**
-
+Current Version: **0.1.0**
 
 ###
 

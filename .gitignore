@@ -1,1 +1,11 @@
-env/
+venv/
+# Exclude logs and data directories
+logs/
+data/
+
+# Ignore the requirements.txt in the root of /bookcat
+/bookcat/requirements.txt
+
+# Do not ignore the requirements.txt in /bookcat/src
+!/bookcat/src/requirements.txt
+
