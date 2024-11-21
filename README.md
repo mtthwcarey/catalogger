@@ -20,7 +20,7 @@ This project uses the following libraries:
 - [PyAudio](https://people.csail.mit.edu/hubert/pyaudio/) - Library for audio I/O
 
 
-- [Matthew Carey](https://github.com/mtthwcarey) - Creator and Maintainer
+[Matthew Carey](https://github.com/mtthwcarey) - Creator and Maintainer
 
 ## Version
 

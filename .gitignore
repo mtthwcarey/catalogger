@@ -1,5 +1,6 @@
-# Ignore the requirements.txt in the bookcat directory
-/requirements.txt
+# Ignore dev-requirements.txt in /bookcat
+/dev-requirements.txt
+
 
 # Do not ignore the requirements.txt in bookcat/src
 !/src/requirements.txt
