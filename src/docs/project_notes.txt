@@ -1,4 +1,4 @@
-Thu 21 Nov 2024 08:36:53 PM PST 
+2024-11-22 10:06:16 PST 
 
 Options 1 (speech input) 2 (one line text input) are least developed right now. I recommend just using the batch file option (#3) for the time being.
 
@@ -13,8 +13,6 @@ a new science of life rupert sheldrake park street press trade paperback 1995
 william gibson the miracle worker paperback bantam 1962
 
 Obviously more info will get you better results. 
-
-Write out your batch file. Fire the script, select #3 and paste in the exact path of your file. Catalogger will process the file and write to a csv in /data on level up from the dir you're in. You'll also find there a separate file detailing failures in fetching metadata. Extensive logging is outputted to /logs on the same directory level.
 
 You will need an OpenAI API key to run Catalogger. 
 Set your OpenAI API key as an environment variable named OPENAI_API_KEY.

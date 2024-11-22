@@ -50,26 +50,25 @@ def recognize_speech():
                 print("You can speak now.")
                 audio = recognizer.listen(source)
                 print("Audio captured. Processing...")
-        # Recognize speech
         text = recognizer.recognize_google(audio)
         logging.info(f"Recognized speech: {text}")
-        print(f"Recognized speech: {text}")
         return text
     except sr.UnknownValueError:
         logging.warning("Speech was not understood. Please try again.")
-        print("Speech was not understood. Please try again.")
         return None
     except sr.RequestError as e:
         logging.error(f"Error with the Google Speech Recognition API: {e}")
-        print(f"Error with the Google Speech Recognition API: {e}")
         return None
     except Exception as e:
         logging.error(f"Unexpected error during speech recognition: {e}")
-        print(f"Unexpected error: {e}")
         return None
 
 def parse_book_details(description):
     """Extract book details using OpenAI's ChatCompletion API."""
+    if not description:
+        logging.error("Empty description passed to parse_book_details.")
+        return None
+
     prompt = f"""
     Extract the following details from this book description: 
     - Title
@@ -80,6 +79,9 @@ def parse_book_details(description):
     Description: {description}
     """
     try:
+        # Log the prompt for debugging
+        logging.debug(f"Prompt sent to OpenAI: {prompt.strip()}")
+
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -87,52 +89,103 @@ def parse_book_details(description):
                 {"role": "user", "content": prompt}
             ]
         )
-        details = response['choices'][0]['message']['content'].strip()
-        logging.info(f"Book details extracted: {details}")
-        return details
+
+        # Extract and log the raw response from OpenAI
+        raw_response = response['choices'][0]['message']['content'].strip()
+        logging.debug(f"Raw response from OpenAI: {raw_response}")
+
+        # Log the book details for transparency
+        logging.info(f"Book details extracted: {raw_response}")
+
+        return raw_response
     except Exception as e:
         logging.error(f"Error with OpenAI API: {e}")
-        print(f"Error with OpenAI API: {e}")
         return None
 
-def fetch_metadata(title, author):
-    """Fetch additional metadata from Google Books API."""
+def parse_book_details_to_dict(details_text):
+    """
+    Convert structured book details (string) into a dictionary.
+    Handles inconsistencies such as missing dashes, extra whitespace, or malformed lines.
+    """
+    details_dict = {}
+    try:
+        # Normalize lines to handle leading dashes and extra spaces
+        normalized_lines = [
+            line.strip().lstrip("-").strip() for line in details_text.splitlines() if line.strip()
+        ]
+
+        for line in normalized_lines:
+            if ":" in line:  # Ensure it's a valid key-value pair
+                key, value = line.split(":", 1)  # Split at the first colon
+                key, value = key.strip(), value.strip()  # Remove extra whitespace
+                if key and value:  # Only add valid key-value pairs
+                    details_dict[key] = value
+            else:
+                logging.warning(f"Skipping unrecognized line: {line}")
+
+        logging.debug(f"Parsed book details into dictionary: {details_dict}")
+        return details_dict
+    except Exception as e:
+        logging.error(f"Error parsing book details to dictionary: {e}")
+        return {}
+
+
+def fetch_metadata(title, author, retries=3, pause=1):
+    """Fetch additional metadata from Google Books API with error logging."""
     api_url = "https://www.googleapis.com/books/v1/volumes"
     params = {
         "q": f"intitle:{title}+inauthor:{author}",
         "maxResults": 1
     }
 
-    try:
-        logging.info(f"Fetching metadata for Title: '{title}', Author: '{author}'")
-        response = requests.get(api_url, params=params)
-        response.raise_for_status()
-        time.sleep(1)  # Add a 1-second delay to avoid hitting API rate limits
-        data = response.json()
+    for attempt in range(1, retries + 1):
+        try:
+            logging.info(f"Fetching metadata for Title: '{title}', Author: '{author}' (Attempt {attempt})")
+            response = requests.get(api_url, params=params)
+            response.raise_for_status()  # Raise HTTPError for bad responses (4xx and 5xx)
 
-        if "items" in data:
-            book = data["items"][0]["volumeInfo"]
-            metadata = {
-                "Title": book.get("title", "Unknown"),
-                "Author": ", ".join(book.get("authors", ["Unknown"])),
-                "Publisher": book.get("publisher", "Unknown"),
-                "PublishedDate": book.get("publishedDate", "Unknown"),
-                "ISBN": next((id["identifier"] for id in book.get("industryIdentifiers", []) if id["type"] == "ISBN_13"), "Unknown"),
-                "PageCount": book.get("pageCount", "Unknown"),
-                "Categories": ", ".join(book.get("categories", ["Unknown"])),
-                "Description": book.get("description", "No description available"),
-                "CoverURL": book.get("imageLinks", {}).get("thumbnail", "No cover available")
-            }
-            logging.info(f"Metadata successfully fetched: {metadata}")
-            return metadata
-        else:
-            logging.info(f"No metadata found for Title: '{title}', Author: '{author}'")
-            return None
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching metadata for Title: '{title}', Author: '{author}': {e}")
-        return None
+            data = response.json()
+            if "items" in data:
+                book = data["items"][0]["volumeInfo"]
+                metadata = {
+                    "Title": book.get("title", "Unknown"),
+                    "Author": ", ".join(book.get("authors", ["Unknown"])),
+                    "Publisher": book.get("publisher", "Unknown"),
+                    "PublishedDate": book.get("publishedDate", "Unknown"),
+                    "ISBN": next((id["identifier"] for id in book.get("industryIdentifiers", []) if id["type"] == "ISBN_13"), "Unknown"),
+                    "PageCount": book.get("pageCount", "Unknown"),
+                    "Categories": ", ".join(book.get("categories", ["Unknown"])),
+                    "Description": book.get("description", "No description available"),
+                    "CoverURL": book.get("imageLinks", {}).get("thumbnail", "No cover available")
+                }
+                logging.info(f"Metadata successfully fetched: {metadata}")
+                return metadata
+            else:
+                logging.warning(f"No metadata found for Title: '{title}', Author: '{author}'.")
+                return None
 
-def save_to_csv(book_details, filename=OUTPUT_FILE):
+        except requests.exceptions.RequestException as e:
+            # Log detailed error response
+            if response := e.response:  # Only if the exception contains a response
+                try:
+                    error_message = response.json().get("error", {}).get("message", "Unknown error")
+                    logging.error(f"API Error: {response.status_code} - {error_message}")
+                except ValueError:
+                    # Fallback if the response isn't JSON
+                    logging.error(f"API Error: {response.status_code} - {response.text}")
+            else:
+                logging.error(f"Request error: {e}")
+
+            # Retry mechanism
+            if attempt < retries:
+                logging.info(f"Retrying after {pause} seconds...")
+                time.sleep(pause)
+                pause *= 2  # Exponential backoff
+            else:
+                logging.error(f"Failed to fetch metadata after {retries} attempts.")
+                return None
+
+def save_to_csv(book_details, filename=OUTPUT_FILE, quiet=True):
     """Save book details to a CSV file, updating headers if needed."""
     try:
         existing_data = []
@@ -145,9 +198,9 @@ def save_to_csv(book_details, filename=OUTPUT_FILE):
                 existing_data = list(reader)
                 existing_headers = set(reader.fieldnames or [])
 
-        # Ensure "Index Number" retains its three-digit formatting
-        if "Index Number" in book_details:
-            book_details["Index Number"] = str(book_details["Index Number"]).zfill(3)
+        # Add the "Error Notes" column if it's not present
+        if "Error Notes" not in book_details:
+            book_details["Error Notes"] = "No problems"
 
         new_headers = existing_headers.union(book_details.keys())
         sorted_headers = sorted(new_headers)
@@ -161,108 +214,119 @@ def save_to_csv(book_details, filename=OUTPUT_FILE):
             complete_book_details = {header: book_details.get(header, "") for header in sorted_headers}
             writer.writerow(complete_book_details)
 
-        print(f"Book details saved to {filename}")
+        if not quiet:
+            print(f"Book details saved to {filename}")
     except Exception as e:
         logging.error(f"Error saving to CSV: {e}")
-        print(f"Error saving to CSV: {e}")
-
-def process_batch_file(filename):
-    """Process a text file containing multiple book descriptions."""
-    # Load descriptions from the batch file
-    descriptions = load_descriptions(filename)
-    logging.info(f"Loaded {len(descriptions)} descriptions from {filename}.")
-
-    if not descriptions:
-        logging.warning(f"No valid descriptions found in file: {filename}")
-        return
-
-    # Define the notes file path and ensure it is ready for writing
-    notes_file = os.path.join(DATA_DIR, "entry_notes.txt")
-    logging.info(f"Notes file will be saved to: {notes_file}")
-    clear_or_create_notes_file(notes_file)
-
-    # Process each description
-    for idx, description in enumerate(descriptions, start=1):
-        logging.info(f"Processing description {idx}/{len(descriptions)}...")  # Concise progress update
-        process_single_description(idx, description, notes_file)
-
-    logging.info("Batch processing completed successfully.")
-
-
-
-def load_descriptions(filename):
-    """Load book descriptions from file."""
-    try:
-        with open(filename, "r") as file:
-            return [line.strip() for line in file if line.strip()]
-    except FileNotFoundError:
-        logging.error(f"File not found: {filename}")
-        print(f"File not found: {filename}")
-        return []
-    except Exception as e:
-        logging.error(f"Error reading file {filename}: {e}")
-        print(f"An error occurred while reading the file: {e}")
-        return []
-
-
-def clear_or_create_notes_file(notes_file):
-    """Clear or create the entry notes file."""
-    try:
-        with open(notes_file, "w") as nf:
-            nf.write("Entry Notes Log\n")
-            nf.write("=" * 20 + "\n")
-    except Exception as e:
-        logging.error(f"Error creating notes file: {e}")
-        print(f"An error occurred while setting up the notes file: {e}")
-
 
 def process_single_description(index, description, notes_file):
-    """Process a single book description."""
-    logging.info(f"Processing book {index}: {description[:50]}...")
+    """
+    Process a single book description and handle problematic entries.
+    """
+    if not description:
+        notes = "Empty description"
+        write_to_notes_file(index, "No description provided", notes, notes_file)
+        logging.warning(f"Book {index}: Skipped due to empty description.")
+        return {"Index Number": index, "Error Notes": notes}
 
+    logging.info(f"Processing book {index}: {description[:50]}...")
     notes = "No problems"
 
     # Extract book details
     try:
         book_details_text = parse_book_details(description)
-        if not book_details_text:
-            notes = "Could not extract book details"
+        logging.debug(f"Raw details extracted: {book_details_text}")
+        
+        if not book_details_text or "Title:" not in book_details_text or "Author:" not in book_details_text:
+            notes = "Malformed details format"
             write_to_notes_file(index, description, notes, notes_file)
-            return
+            logging.warning(f"Book {index}: Missing expected fields in extracted details: {book_details_text}")
+            return {"Index Number": index, "Error Notes": notes}
+
+        book_details = parse_book_details_to_dict(book_details_text)
+        if not book_details.get("Title") or not book_details.get("Author"):
+            notes = "Missing title or author in parsed details"
+            write_to_notes_file(index, description, notes, notes_file)
+            logging.warning(f"Book {index}: Missing title or author in parsed dictionary: {book_details}")
+            return {"Index Number": index, "Error Notes": notes}
     except Exception as e:
         notes = f"Error extracting details: {e}"
         write_to_notes_file(index, description, notes, notes_file)
-        return
-
-    # Parse details into a dictionary
-    book_details = parse_book_details_to_dict(book_details_text)
+        logging.error(f"Book {index}: Error extracting details - {e}")
+        return {"Index Number": index, "Error Notes": notes}
 
     # Fetch metadata
-    metadata_found = False
     try:
-        metadata = fetch_metadata(book_details.get("Title", ""), book_details.get("Author", ""))
+        metadata = fetch_metadata(book_details["Title"], book_details["Author"])
         if metadata:
             book_details.update(metadata)
-            metadata_found = True
+            logging.info(f"Book {index}: Metadata fetched successfully.")
         else:
             notes = "Metadata not found"
             write_to_notes_file(index, description, notes, notes_file)
+            logging.warning(f"Book {index}: Metadata not found.")
     except Exception as e:
         notes = f"Error fetching metadata: {e}"
         write_to_notes_file(index, description, notes, notes_file)
-
-    # Add processing notes to the book details
-    book_details["Notes"] = notes
+        logging.error(f"Book {index}: Error fetching metadata - {e}")
 
     # Save details to CSV
     try:
         book_details["Index Number"] = f"{index:03}"
         book_details["Entry Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        book_details["Error Notes"] = notes  # Add notes to the book details
         save_to_csv(book_details)
         logging.info(f"Book {index}: Saved successfully.")
     except Exception as e:
         notes = f"Error saving to CSV: {e}"
         write_to_notes_file(index, description, notes, notes_file)
+        logging.error(f"Book {index}: Error saving to CSV - {e}")
+        return {"Index Number": index, "Error Notes": notes}
+
+    return {"Index Number": index, "Error Notes": notes}
+
+def process_batch_file(filename):
+    """Process a text file containing multiple book descriptions."""
+    logging.info(f"Starting batch file processing for: {filename}")
+
+    # Add this debug statement
+    if not os.path.isfile(filename):
+        logging.error(f"File does not exist: {filename}")
+        print(f"Error: File does not exist - {filename}")
+        return
+
+    try:
+        descriptions = load_descriptions(filename)
+        logging.info(f"Loaded {len(descriptions)} descriptions from {filename}.")
+        print(f"Loaded {len(descriptions)} descriptions from {filename}.")
+
+        if not descriptions:
+            logging.warning(f"No valid descriptions found in file: {filename}")
+            print("No valid descriptions found. Exiting.")
+            return
+
+        notes_file = os.path.join(DATA_DIR, "entry_notes.txt")
+        with open(notes_file, "w") as nf:
+            nf.write("Entry Notes Log\n")
+            nf.write("=" * 20 + "\n")
+
+        total_books = len(descriptions)
+        print("Processing started...")
+
+        for idx, description in enumerate(descriptions, start=1):
+            if not description:
+                logging.warning(f"Empty description for book {idx}. Skipping.")
+                write_to_notes_file(idx, "Empty description", "No content", notes_file)
+                continue
+
+            process_single_description(idx, description, notes_file)
+            print(f"\rProcessed {idx}/{total_books} books...", end="")
+
+        print("\nProcessing complete!")
+
+    except Exception as e:
+        logging.error(f"Error during batch processing: {e}")
+        print(f"Error: {e}")
 
 
 def write_to_notes_file(index, description, notes, notes_file):
@@ -271,34 +335,25 @@ def write_to_notes_file(index, description, notes, notes_file):
     try:
         with open(notes_file, "a") as nf:
             nf.write(entry_note)
-        logging.info(f"Written to notes file: Book {index}")
+        logging.info(f"Written to notes file: Book {index} - Notes: {notes}")
     except Exception as e:
-        logging.error(f"Failed to write to notes file: {e}")
-        print(f"Error writing to notes file: {e}")
+        logging.error(f"Failed to write to notes file for Book {index}: {e}")
 
-def parse_book_details_to_dict(book_details_text):
-    """Parse extracted book details into a dictionary."""
-    book_details = {}
-    for line in book_details_text.split("\n"):
-        try:
-            key, value = line.split(":", 1)
-            book_details[key.strip().lstrip("-").strip()] = value.strip()
-        except ValueError:
-            logging.warning(f"Malformed line in book details: {line}")
-    return book_details
-
-
-def handle_entry_failure(index, description, reason, notes_file):
-    """Handle failures during book processing."""
-    entry_note = f"Skipped book {index}: {reason}"
-    print(entry_note)
-    logging.warning(entry_note)
+def load_descriptions(filename):
+    """Load book descriptions from file."""
     try:
-        with open(notes_file, "a") as nf:
-            nf.write(f"{entry_note} - Description: {description[:50]}...\n")
+        with open(filename, "r") as file:
+            descriptions = [line.strip() for line in file if line.strip()]
+            logging.info(f"Successfully loaded {len(descriptions)} descriptions from {filename}.")
+            return descriptions
+    except FileNotFoundError:
+        logging.error(f"File not found: {filename}")
+        return []
     except Exception as e:
-        logging.error(f"Failed to write to notes file: {e}")
+        logging.error(f"Error reading file {filename}: {e}")
+        return []
 
+# Other functions...
 
 def main():
     print("Starting the book cataloging tool...")
@@ -315,6 +370,8 @@ def main():
             print("Exiting the book cataloging tool. Goodbye!")
             break
 
+        description = None
+
         if choice == "1":
             description = recognize_speech()
             if not description:
@@ -326,6 +383,13 @@ def main():
             filename = input("Enter the path to the batch file: ").strip()
             process_batch_file(filename)
             continue
+        else:
+            print("Invalid option. Returning to menu.")
+            continue
+
+        if not description:
+            print("Description is empty or invalid. Returning to menu.")
+            continue
 
         print("Extracting book details...")
         book_details_text = parse_book_details(description)
@@ -333,14 +397,7 @@ def main():
             print("Could not extract book details.")
             continue
 
-        book_details = {}
-        for line in book_details_text.split("\n"):
-            try:
-                key, value = line.split(":", 1)
-                book_details[key.strip().lstrip("-").strip()] = value.strip()
-            except ValueError:
-                continue
-
+        book_details = parse_book_details_to_dict(book_details_text)
         metadata = fetch_metadata(book_details.get("Title", ""), book_details.get("Author", ""))
         if metadata:
             book_details.update(metadata)
@@ -348,6 +405,8 @@ def main():
         save_to_csv(book_details)
         print("Book added successfully!")
 
+# Ensure script runs correctly when executed directly
 if __name__ == "__main__":
     main()
+
 

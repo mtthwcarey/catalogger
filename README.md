@@ -16,9 +16,8 @@ pip install -r requirements.txt
 You will need an OpenAI API key. 
 Set your OpenAI API key as an environment variable named OPENAI_API_KEY.
 
-
 ## Usage
-Run the main script to start cataloging your book collection.
+Run main.py and choose between cli or gui modes.
 
 ## Credits
 
@@ -38,4 +37,4 @@ Current Version: **0.1.0**
 
 ###
 
-Thu 21 Nov 2024 09:16:24 PM PST 
+2024-11-22 10:04:26 PST 
